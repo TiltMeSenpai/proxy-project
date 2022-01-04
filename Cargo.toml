@@ -1,0 +1,33 @@
+[package]
+name = "proxy"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "proxy_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "proxy"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "^1.15.0", features = ["full"] }
+openssl = { version = "0.10.38", features = ["vendored"]}
+rustls = "0.20.2"
+tokio-rustls = "0.23.2"
+lazy_static = "1.4.0"
+hyper-tls = "0.5.0"
+
+[dependencies.hyper]
+version = "^0.14.16"
+features = [
+    "server",
+    "client",
+    "http1",
+    "http2",
+    "tcp"
+]
+
+[profile.release]
+debug = true
