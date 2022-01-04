@@ -17,13 +17,8 @@ use openssl::{
 use lazy_static::lazy_static;
 use rustls::{server::ResolvesServerCert, sign::RsaSigningKey};
 
-const PUBKEY_PATH: &str = "data/cert";
-const PRIVKEY_PATH: &str = "data/key";
-
 lazy_static! {
     pub static ref SSL_CONF: Conf = Conf::new(openssl::conf::ConfMethod::default()).unwrap();
-    pub static ref CERT_STORE: Arc<CertStore> =
-        Arc::new(CertStore::load_or_create(PUBKEY_PATH, PRIVKEY_PATH));
 }
 
 pub struct CertStore {
@@ -32,17 +27,18 @@ pub struct CertStore {
 }
 
 impl CertStore {
-    fn load_or_create(pubkey_path: &str, privkey_path: &str) -> Self {
+    pub fn load_or_create(pubkey_path: &str, privkey_path: &str) -> Self {
         Self::try_load_or_create(pubkey_path, privkey_path)
             .expect("Unable to load or create cert store")
     }
 
-    fn try_load_or_create(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
+    pub fn try_load_or_create(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
         CertStore::try_load(pubkey_path, privkey_path)
-            .or(CertStore::try_new(pubkey_path, privkey_path))
+            .or_else(|| { CertStore::try_new(pubkey_path, privkey_path) })
     }
 
-    fn try_new(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
+    pub fn try_new(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
+        println!("Creating new cert");
         let mut cert = X509Builder::new().ok()?;
         cert.set_version(2).ok()?;
         cert.set_not_before(Asn1Time::days_from_now(0).ok()?.as_ref())
