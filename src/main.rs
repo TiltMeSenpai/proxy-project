@@ -1,28 +1,15 @@
 use std::convert::Infallible;
-use std::io::{Error, Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::io::Error;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use hyper::http::uri::{Authority, Parts, Scheme};
+use hyper::http::uri::{Authority, Scheme};
 use hyper::server::conn::{AddrStream, Http};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Client, Method, Request, Response, Server, StatusCode, Uri};
+use hyper::{Body, Client, Method, Request, Response, Server, Uri};
 
-use lazy_static::lazy_static;
-use openssl::asn1::Asn1Integer;
-use openssl::bn::MsbOption;
-use openssl::conf::Conf;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private};
-use openssl::rsa::Rsa;
-use openssl::x509::{extension, X509Builder, X509Extension, X509NameBuilder};
-use openssl::{asn1::Asn1Time, bn::BigNum, x509::X509};
-use rustls::server::{ResolvesServerCert, WantsServerCert};
-use rustls::sign::RsaSigningKey;
-use rustls::{Certificate, ConfigBuilder, ServerConfig};
-use tokio::io::DuplexStream;
-use tokio::sync::mpsc::{Receiver, Sender};
+use rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
 
 mod cert;
@@ -35,7 +22,10 @@ fn server_config_for(host: &Uri) -> Arc<ServerConfig> {
             .with_safe_default_protocol_versions()
             .unwrap()
             .with_no_client_auth()
-            .with_cert_resolver(cert::CertStore::build_cert(&cert::CERT_STORE, host.host().map(|host| host.to_owned()))),
+            .with_cert_resolver(cert::CertStore::build_cert(
+                &cert::CERT_STORE,
+                host.host().map(|host| host.to_owned()),
+            )),
     )
 }
 

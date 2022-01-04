@@ -1,7 +1,18 @@
-use std::{path::Path, fs::File, io::{Write, Read}, sync::Arc};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    sync::Arc,
+};
 
-use hyper::http::uri::Authority;
-use openssl::{pkey::{PKey, Private}, x509::{X509, X509Builder, X509NameBuilder, extension, X509Extension}, asn1::{Asn1Time, Asn1Integer}, rsa::Rsa, hash::MessageDigest, conf::Conf, bn::{BigNum, MsbOption}};
+use openssl::{
+    asn1::{Asn1Integer, Asn1Time},
+    bn::{BigNum, MsbOption},
+    conf::Conf,
+    hash::MessageDigest,
+    pkey::{PKey, Private},
+    rsa::Rsa,
+    x509::{extension, X509Builder, X509Extension, X509NameBuilder, X509},
+};
 
 use lazy_static::lazy_static;
 use rustls::{server::ResolvesServerCert, sign::RsaSigningKey};
@@ -9,23 +20,26 @@ use rustls::{server::ResolvesServerCert, sign::RsaSigningKey};
 const PUBKEY_PATH: &str = "data/cert";
 const PRIVKEY_PATH: &str = "data/key";
 
-lazy_static!{
+lazy_static! {
     pub static ref SSL_CONF: Conf = Conf::new(openssl::conf::ConfMethod::default()).unwrap();
-    pub static ref CERT_STORE: Arc<CertStore> = Arc::new(CertStore::load_or_create(PUBKEY_PATH, PRIVKEY_PATH));
+    pub static ref CERT_STORE: Arc<CertStore> =
+        Arc::new(CertStore::load_or_create(PUBKEY_PATH, PRIVKEY_PATH));
 }
 
 pub struct CertStore {
     privkey: PKey<Private>,
-    pubkey: X509
+    pubkey: X509,
 }
 
 impl CertStore {
     fn load_or_create(pubkey_path: &str, privkey_path: &str) -> Self {
-        Self::try_load_or_create(pubkey_path, privkey_path).expect("Unable to load or create cert store")
+        Self::try_load_or_create(pubkey_path, privkey_path)
+            .expect("Unable to load or create cert store")
     }
 
     fn try_load_or_create(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
-        CertStore::try_load(pubkey_path, privkey_path).or(CertStore::try_new(pubkey_path, privkey_path))
+        CertStore::try_load(pubkey_path, privkey_path)
+            .or(CertStore::try_new(pubkey_path, privkey_path))
     }
 
     fn try_new(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
@@ -63,7 +77,7 @@ impl CertStore {
                 .critical()
                 .ca()
                 .build()
-                .ok()?
+                .ok()?,
         )
         .unwrap();
         {
@@ -86,37 +100,35 @@ impl CertStore {
         key_file.write(&key.private_key_to_der().ok()?[..]).ok()?;
         Some(CertStore {
             privkey: key,
-            pubkey: cert
+            pubkey: cert,
         })
     }
 
-    fn try_load(pubkey_path: &str, privkey_path: &str) -> Option<Self>{
+    fn try_load(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
         let mut cert_file: File = File::open(pubkey_path).ok()?;
         let mut key_file: File = File::open(privkey_path).ok()?;
         let mut cert: Vec<u8> = Vec::new();
         cert_file.read_to_end(&mut cert).unwrap();
         let mut key: Vec<u8> = Vec::new();
         key_file.read_to_end(&mut key).unwrap();
-        Some(
-            Self{
-                pubkey: X509::from_pem(&cert[..]).unwrap(),
-                privkey: PKey::private_key_from_der(&key[..]).unwrap(),
-            }
-        )
+        Some(Self {
+            pubkey: X509::from_pem(&cert[..]).unwrap(),
+            privkey: PKey::private_key_from_der(&key[..]).unwrap(),
+        })
     }
 
     #[allow(dead_code)]
     pub fn build_cert(store: &Arc<Self>, hostname: Option<String>) -> Arc<CertResolver> {
         Arc::new(CertResolver {
             cert_store: store.to_owned(),
-            fallback_host: hostname
+            fallback_host: hostname,
         })
     }
 }
 
 pub struct CertResolver {
     cert_store: Arc<CertStore>,
-    fallback_host: Option<String>
+    fallback_host: Option<String>,
 }
 
 impl ResolvesServerCert for CertResolver {
@@ -127,9 +139,10 @@ impl ResolvesServerCert for CertResolver {
         let privkey = &self.cert_store.privkey;
         let pubkey = &self.cert_store.pubkey;
         let hostname = client_hello
-            .server_name().map(|host| host.to_owned())
+            .server_name()
+            .map(|host| host.to_owned())
             .or(self.fallback_host.to_owned())?;
-        
+
         println!("Negotiating TLS to {}", hostname);
         if let Ok(mut cert) = X509::builder() {
             let mut serial = BigNum::new().unwrap();
