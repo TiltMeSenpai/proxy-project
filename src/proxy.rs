@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::convert::Infallible;
 use std::future::Future;
 use std::io::Error;
@@ -15,6 +17,7 @@ use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{Sender,Receiver, channel};
 use tokio_rustls::TlsAcceptor;
 use crate::cert::{CertStore};
+
 
 #[derive(Debug)]
 enum ProxyState {
@@ -79,7 +82,7 @@ impl Proxy {
 
     pub fn run(proxy: Arc<Self>) -> JoinHandle<Result<(), hyper::Error>>{
         let proxy_move = proxy.clone();
-        let make_svc = make_service_fn(move |socket: &AddrStream| {
+        let make_svc = make_service_fn(move |_socket: &AddrStream| {
             let proxy = proxy_move.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
