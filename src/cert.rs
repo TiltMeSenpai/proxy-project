@@ -34,7 +34,7 @@ impl CertStore {
 
     pub fn try_load_or_create(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
         CertStore::try_load(pubkey_path, privkey_path)
-            .or_else(|| { CertStore::try_new(pubkey_path, privkey_path) })
+            .or_else(|| CertStore::try_new(pubkey_path, privkey_path))
     }
 
     pub fn try_new(pubkey_path: &str, privkey_path: &str) -> Option<Self> {
