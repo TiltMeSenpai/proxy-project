@@ -74,7 +74,7 @@ impl ProxyServer {
                     &conf.pubkey_path,
                     &conf.privkey_path,
                 )),
-                request_source: Arc::new(tx),
+                request_source: tx,
                 id: Arc::new(AtomicU32::new(conf.starting_id)),
                 fallback_host: None,
                 client: Client::builder().build(hyper_tls::HttpsConnector::new()),
@@ -111,7 +111,7 @@ impl<'a> Service<&'a AddrStream> for ProxyServer {
 #[derive(Clone)]
 pub struct ProxyCore {
     cert_store: Arc<CertStore>,
-    request_source: Arc<Sender<ProxyEvent>>,
+    request_source: Sender<ProxyEvent>,
     id: Arc<AtomicU32>,
     fallback_host: Option<String>,
     client: Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>, Body>,
