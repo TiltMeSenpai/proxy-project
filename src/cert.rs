@@ -139,7 +139,6 @@ impl ResolvesServerCert for CertResolver {
             .map(|host| host.to_owned())
             .or(self.fallback_host.to_owned())?;
 
-        println!("Negotiating TLS to {}", hostname);
         if let Ok(mut cert) = X509::builder() {
             let mut serial = BigNum::new().unwrap();
             if let Err(e) = serial.rand(128, MsbOption::MAYBE_ZERO, true) {
