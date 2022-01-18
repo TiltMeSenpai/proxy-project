@@ -20,6 +20,8 @@ lazy_static = "1.4.0"
 hyper-tls = "0.5.0"
 futures = "0.3.19"
 futures-core = "0.3.19"
+tokio-stream = { version = "0.1.8", features = ["sync"] }
+eframe = "0.16.0"
 
 [dependencies.hyper]
 version = "^0.14.16"

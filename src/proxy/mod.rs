@@ -23,10 +23,11 @@ pub enum ProxyState {
     UpgradeTx{id: u32, chunk: Bytes},
     UpgradeRx{id: u32, chunk: Bytes},
     Error(String),
+    Shutdown
 }
 
 #[derive(Debug, Clone)]
 pub struct ProxyEvent {
-    id: u32,
-    event: ProxyState,
+    pub id: u32,
+    pub event: ProxyState,
 }

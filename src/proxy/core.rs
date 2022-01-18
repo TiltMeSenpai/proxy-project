@@ -36,7 +36,7 @@ impl Default for ProxyConfig {
             pubkey_path: "data/cert".to_string(),
             privkey_path: "data/key".to_string(),
             listen: SocketAddr::from(([0, 0, 0, 0], 1337)),
-            starting_id: 0,
+            starting_id: 1, // Reserve id 0 for events not associated with requests
         }
     }
 }

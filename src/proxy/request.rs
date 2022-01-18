@@ -3,7 +3,7 @@ use crate::proxy::body::StreamBody;
 
 use super::{ProxyEvent, Sender, ProxyState};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RequestHead {
     pub method: Method,
     pub uri: Uri,
