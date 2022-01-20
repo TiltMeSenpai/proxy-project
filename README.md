@@ -1,4 +1,4 @@
-# Unnamed Proxy Project
+# Stain Proxy
 High performance tampering/intercepting proxy
 # TODO:
 - [X] Basic HTTP(s) proxy support and TLS connection management

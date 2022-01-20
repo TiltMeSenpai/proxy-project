@@ -8,7 +8,7 @@ name = "proxy_core"
 path = "src/lib.rs"
 
 [[bin]]
-name = "proxy"
+name = "stain"
 path = "src/main.rs"
 
 [dependencies]
@@ -22,6 +22,7 @@ futures = "0.3.19"
 futures-core = "0.3.19"
 tokio-stream = { version = "0.1.8", features = ["sync"] }
 eframe = "0.16.0"
+webpki-roots = "0.22.2"
 
 [dependencies.hyper]
 version = "^0.14.16"
