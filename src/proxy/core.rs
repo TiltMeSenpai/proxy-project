@@ -6,15 +6,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 
-use crate::cert::CertStore;
+use crate::tls::{CertStore, CertVerifier};
 use hyper::http::uri::{Authority, Scheme};
 use hyper::server::conn::{AddrStream, Http};
 use hyper::service::Service;
 use hyper::upgrade::{self, Upgraded};
 use hyper::{Body, Client, Method, Request, Response, Server, Uri};
 use hyper::body::Bytes;
-use rustls::{ServerConfig};
-use hyper_tls::native_tls::TlsConnector;
+use rustls::{ServerConfig, ClientConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -58,10 +57,15 @@ impl ProxyServer {
         let (tx, _rx) = channel(128);
         let mut http_connector = hyper::client::HttpConnector::new();
         http_connector.enforce_http(false);
-        let client_config = TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .unwrap();
+        let client_config = ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(CertVerifier::new(tx.clone())))
+            .with_no_client_auth();
+        let client = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(client_config)
+            .https_or_http()
+            .enable_http1()
+            .build();
         Self {
             listen: conf.listen,
             events: tx.clone(),
@@ -73,7 +77,7 @@ impl ProxyServer {
                 channel: tx,
                 id: Arc::new(AtomicU32::new(conf.starting_id)),
                 fallback_host: None,
-                client: Client::builder().build(hyper_tls::HttpsConnector::from((http_connector, client_config.into())))
+                client: Client::builder().build(client)
             },
         }
     }
@@ -114,7 +118,7 @@ pub struct ProxyCore {
     channel: Sender<ProxyEvent>,
     id: Arc<AtomicU32>,
     fallback_host: Option<String>,
-    client: Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>, Body>,
+    client: Client<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>, Body>,
 }
 
 impl Service<Request<Body>> for ProxyCore {

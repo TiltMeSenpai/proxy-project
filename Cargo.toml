@@ -14,15 +14,15 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "^1.15.0", features = ["full"] }
 openssl = { version = "0.10.38", features = ["vendored"]}
-rustls = "0.20.2"
+rustls = { version = "0.20.2", features = ["dangerous_configuration"]}
 tokio-rustls = "0.23.2"
 lazy_static = "1.4.0"
-hyper-tls = "0.5.0"
 futures = "0.3.19"
 futures-core = "0.3.19"
 tokio-stream = { version = "0.1.8", features = ["sync"] }
 eframe = "0.16.0"
 webpki-roots = "0.22.2"
+hyper-rustls = "0.23.0"
 
 [dependencies.hyper]
 version = "^0.14.16"

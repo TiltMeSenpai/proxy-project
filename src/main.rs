@@ -1,4 +1,4 @@
-mod cert;
+mod tls;
 mod proxy;
 mod gui;
 mod store;

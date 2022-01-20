@@ -15,7 +15,11 @@ use openssl::{
 };
 
 use lazy_static::lazy_static;
-use rustls::{server::ResolvesServerCert, sign::RsaSigningKey};
+use rustls::{server::ResolvesServerCert, sign::RsaSigningKey, client::ServerCertVerifier};
+use tokio::sync::broadcast::Sender;
+use rustls::client::WebPkiVerifier;
+
+use crate::proxy::ProxyEvent;
 
 lazy_static! {
     pub static ref SSL_CONF: Conf = Conf::new(openssl::conf::ConfMethod::default()).unwrap();
@@ -196,5 +200,50 @@ impl ResolvesServerCert for CertResolver {
         } else {
             None
         }
+    }
+}
+
+pub struct CertVerifier {
+    channel: Sender<ProxyEvent>,
+    inner: WebPkiVerifier
+}
+
+impl CertVerifier {
+    pub fn new(channel: Sender<ProxyEvent>) -> Self {
+        let mut store = rustls::RootCertStore::empty();
+        store.add_server_trust_anchors(
+            webpki_roots::TLS_SERVER_ROOTS
+            .0
+            .iter()
+            .map(|ta| {
+                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    ta.subject,
+                    ta.spki,
+                    ta.name_constraints,
+                )
+            })
+        );
+        Self {
+            channel,
+            inner: WebPkiVerifier::new(store, None)
+        }
+    }
+}
+
+impl ServerCertVerifier for CertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::Certificate,
+        intermediates: &[rustls::Certificate],
+        server_name: &rustls::ServerName,
+        scts: &mut dyn Iterator<Item = &[u8]>,
+        ocsp_response: &[u8],
+        now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        if let Err(e) = self.inner.verify_server_cert(end_entity, intermediates, server_name, scts, ocsp_response, now) {
+            println!("Cert verification failed: {}", &e);
+            self.channel.send(crate::proxy::ProxyEvent{id: 0, event: crate::proxy::ProxyState::Msg(e.to_string())}).unwrap();
+        }
+        Ok(rustls::client::ServerCertVerified::assertion())
     }
 }

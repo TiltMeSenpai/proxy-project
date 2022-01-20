@@ -22,7 +22,8 @@ pub enum ProxyState {
     ResponseDone{id: u32},
     UpgradeTx{id: u32, chunk: Bytes},
     UpgradeRx{id: u32, chunk: Bytes},
-    Error(String),
+    Error(String), // Something has gone wrong affecting a state machine
+    Msg(String),   // Non-state changing alerts
     Shutdown
 }
 
