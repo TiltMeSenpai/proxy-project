@@ -153,7 +153,7 @@ impl Service<Request<Body>> for ProxyCore {
                 Ok(Response::default())
             } else {
                 if let Some(host) = host.or(proxy.fallback_host) {
-                    let id = proxy.id.fetch_add(1, Ordering::Relaxed);
+                    let id = proxy.id.fetch_add(1, crate::ORDERING);
                     let mut uri = req.uri().to_owned().into_parts();
                     uri.authority = Some(Authority::from_maybe_shared(host.clone()).unwrap());
                     if uri.scheme == None {
@@ -161,7 +161,9 @@ impl Service<Request<Body>> for ProxyCore {
                     }
                     let uri = Uri::from_parts(uri).unwrap();
                     *req.uri_mut() = uri;
-                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone());
+                    let req_waiter = crate::Waitpoint::new();
+                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone(), req_waiter.clone());
+                    req_waiter.await;
                     match proxy.client.request(ser_req.into()).await {
                         Err(e) => {
                             proxy.channel.send(super::ProxyEvent {
@@ -176,61 +178,66 @@ impl Service<Request<Body>> for ProxyCore {
                             )
                         },
                         Ok(resp) => {
-                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone());
+                            let resp_waiter = crate::Waitpoint::new();
+                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone(), resp_waiter.clone());
+                            resp_waiter.await;
                             tokio::spawn( async move {
                                 if let (Some(req_upgrade), Some(resp_upgrade)) = (req_upgrade, resp_upgrade) {
                                     println!("Both sides trying to upgrade, attempting");
                                     let chan = proxy.channel.clone();
                                     let chunk_id = AtomicU32::new(0);
                                     match try_join!(req_upgrade, resp_upgrade){
-                                        Ok((mut req, mut resp)) => loop {
-                                            select!{
-                                                chunk = async {
-                                                    let mut buf: [u8; 512] = [0; 512];
-                                                    if let Ok(read) = req.read(&mut buf).await{
-                                                        if read > 0 {
-                                                            let bytes = Bytes::copy_from_slice(&buf[..read]);
-                                                            chan.send(super::ProxyEvent{
-                                                                id, 
-                                                                event: super::ProxyState::UpgradeTx{id: chunk_id.fetch_add(1, Ordering::Relaxed), chunk: bytes.clone()}
-                                                            }).unwrap();
-                                                            Some(bytes)
+                                        Ok((mut req, mut resp)) => {
+                                            chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeOpen}).unwrap();
+                                            loop {
+                                                select!{
+                                                    chunk = async {
+                                                        let mut buf: [u8; 512] = [0; 512];
+                                                        if let Ok(read) = req.read(&mut buf).await{
+                                                            if read > 0 {
+                                                                let bytes = Bytes::copy_from_slice(&buf[..read]);
+                                                                chan.send(super::ProxyEvent{
+                                                                    id, 
+                                                                    event: super::ProxyState::UpgradeTx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
+                                                                }).unwrap();
+                                                                Some(bytes)
+                                                            } else {
+                                                                None
+                                                            }
                                                         } else {
                                                             None
                                                         }
-                                                    } else {
-                                                        None
-                                                    }
-                                                } => {
-                                                    if let Some(bytes) = chunk {
-                                                        resp.write_all(&bytes).await.unwrap()
-                                                    } else {
-                                                        println!("Req disconnected, done");
-                                                        break
-                                                    }
-                                                },
-                                                chunk = async {
-                                                    let mut buf: [u8; 512] = [0; 512];
-                                                    if let Ok(read) = resp.read(&mut buf).await{
-                                                        if read > 0 {
-                                                            let bytes = Bytes::copy_from_slice(&buf[..read]);
-                                                            chan.send(super::ProxyEvent{
-                                                                id, 
-                                                                event: super::ProxyState::UpgradeRx{id: chunk_id.fetch_add(1, Ordering::Relaxed), chunk: bytes.clone()}
-                                                            }).unwrap();
-                                                            Some(bytes)
+                                                    } => {
+                                                        if let Some(bytes) = chunk {
+                                                            resp.write_all(&bytes).await.unwrap()
+                                                        } else {
+                                                            println!("Req disconnected, done");
+                                                            break
+                                                        }
+                                                    },
+                                                    chunk = async {
+                                                        let mut buf: [u8; 512] = [0; 512];
+                                                        if let Ok(read) = resp.read(&mut buf).await{
+                                                            if read > 0 {
+                                                                let bytes = Bytes::copy_from_slice(&buf[..read]);
+                                                                chan.send(super::ProxyEvent{
+                                                                    id, 
+                                                                    event: super::ProxyState::UpgradeRx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
+                                                                }).unwrap();
+                                                                Some(bytes)
+                                                            } else {
+                                                                None
+                                                            }
                                                         } else {
                                                             None
                                                         }
-                                                    } else {
-                                                        None
-                                                    }
-                                                } => {
-                                                    if let Some(bytes) = chunk {
-                                                        req.write_all(&bytes).await.unwrap()
-                                                    } else {
-                                                        println!("Resp disconnected, done");
-                                                        break
+                                                    } => {
+                                                        if let Some(bytes) = chunk {
+                                                            req.write_all(&bytes).await.unwrap()
+                                                        } else {
+                                                            println!("Resp disconnected, done");
+                                                            break
+                                                        }
                                                     }
                                                 }
                                             }
@@ -239,6 +246,7 @@ impl Service<Request<Body>> for ProxyCore {
                                             eprintln!("Error upgrading: {}", e)
                                         }
                                     }
+                                    chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeClose}).unwrap();
                                     println!("Done, closing socket");
                                 }
                             });
