@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::io::Error;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -35,7 +34,7 @@ struct StoredPair {
     response: Option<StoredResponse>,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 enum StoredResult {
     Pending,
     Ok,
@@ -100,8 +99,22 @@ impl Store {
         self.frame.lock().unwrap().replace(frame);
     }
 
+    fn get_status(&self, idx: usize) -> Option<(StoredResult, StoredResult)> {
+        if let Ok(store) = self.store.cache.try_borrow() {
+            store.get(idx).map(
+                | pair | (
+                    pair.request.as_ref().map( |request | request.status.clone() ).unwrap_or( StoredResult::Pending ),
+                    pair.response.as_ref().map( |response | response.status.clone() ).unwrap_or( StoredResult::Pending )
+                )
+            )
+        } else {
+            None
+        }
+    }
+
     pub fn draw_active(&self, ui: &mut Ui) {
         if let Some(idx) = self.active {
+            ui.heading(format!("{:?}", self.get_status(idx)));
             if let Some(cache) = self.store.cache.try_borrow().ok() {
                 if let Some(pair) = cache.get(idx) {
                     if let Some(req) = &pair.request {
@@ -137,7 +150,7 @@ impl Store {
                     let path_len = path.len();
                     let total = method_len + path_len + 1;
                     let text = if total > line_width {
-                        format!("{} {:.*}...", method, line_width - method_len - 6, path)
+                        format!("{} {:.*}...", method, line_width - method_len - 5, path)
                     } else {
                         format!("{} {}", method, path)
                     };
@@ -145,6 +158,8 @@ impl Store {
                     if label.clicked() {
                         self.active = Some(idx + start)
                     }
+                } else {
+                    ui.label(format!("???"));
                 }
             });
             ui.allocate_space(ui.available_size());
@@ -159,19 +174,19 @@ impl Store {
                 loop {
                     let mut repaint = false;
                     match channel.recv().await {
-                        Ok(ProxyEvent{id, event}) => {
+                        Ok(ProxyEvent{id, mut event}) => {
                             if let Ok(mut store_mut) = store.cache.try_borrow_mut() {
                                 if id > 0 {
                                     let id = (id - 1) as usize;
                                     let len = store_mut.len();
-                                    match event {
-                                        crate::proxy::ProxyState::RequestHead(head) => {
+                                    match &event {
+                                        crate::proxy::ProxyState::RequestHead(head, _wait) => {
                                             repaint = true;
                                             match std::cmp::Ord::cmp(&len, &id) {
                                                 std::cmp::Ordering::Equal => {
                                                         store_mut.push(StoredPair{
                                                             request: Some(StoredRequest {
-                                                                head: head,
+                                                                head: head.clone(),
                                                                 body: Vec::new(),
                                                                 last_chunk_id: 0,
                                                                 status: StoredResult::Pending
@@ -186,13 +201,13 @@ impl Store {
                                                     }
                                                     store_mut.push(StoredPair{
                                                         request: Some(StoredRequest {
-                                                            head: head,
+                                                            head: head.clone(),
                                                             body: Vec::new(),
                                                             last_chunk_id: 0,
                                                             status: StoredResult::Pending
                                                         }),
                                                         response: None,
-                                                    })
+                                                    });
                                                 }
                                                 std::cmp::Ordering::Greater => {
                                                     println!("Too many requests, have {} but id is {}", len, id);
@@ -200,7 +215,7 @@ impl Store {
                                                         if None == slot.request {
                                                             println!("Slot is empty, filling");
                                                             slot.request = Some(StoredRequest {
-                                                                head: head,
+                                                                head: head.clone(),
                                                                 body: Vec::new(),
                                                                 last_chunk_id: 0,
                                                                 status: StoredResult::Pending
@@ -210,39 +225,41 @@ impl Store {
                                                 },
                                             }
                                         },
-                                        crate::proxy::ProxyState::RequestChunk { id, chunk } => {
-                                            store_mut.get_mut(id as usize)
-                                                .map(|pair| {
+                                        crate::proxy::ProxyState::RequestChunk { chunk } => {
+                                            if let Some(pair) = store_mut.get_mut(id as usize) {
                                                     if let Some(req) = pair.req_mut() {
-                                                        req.last_chunk_id = id;
                                                         req.body.extend_from_slice(&chunk);
+                                                    } else {
+                                                        println!("Got chunk for {} but request empty", id)
                                                     }
-                                            });
+                                            } else {
+                                                println!("Got chunk for {} but index empty", id)
+                                            }
                                         },
-                                        crate::proxy::ProxyState::RequestDone { id } => {
+                                        crate::proxy::ProxyState::RequestDone => {
                                             if let Some(pair) = store_mut.get_mut(id as usize) {
                                                 if let Some(req) = pair.req_mut() {
                                                     req.status = StoredResult::Ok;
                                                 } else {
-                                                    println!("Request done but nothing stored????")
+                                                    println!("Request {} done but nothing stored????", id)
                                                 }
                                             }
                                         },
-                                        crate::proxy::ProxyState::ResponseHead( head ) => {
+                                        crate::proxy::ProxyState::ResponseHead( head, _wait) => {
                                             if let Some(pair) = store_mut.get_mut(id as usize) {
                                                 if pair.response == None {
                                                     pair.response = Some(StoredResponse {
-                                                        head: head,
+                                                        head: head.clone(),
                                                         body: Vec::new(),
                                                         last_chunk_id: 0,
                                                         status: StoredResult::Pending
                                                     })
                                                 }
                                             } else {
-                                                println!("Missing request {}, wtf???", id);
+                                                println!("Missing response {}, wtf???", id);
                                             }
                                         },
-                                        crate::proxy::ProxyState::ResponseChunk { id, chunk } => {
+                                        crate::proxy::ProxyState::ResponseChunk { chunk } => {
                                             store_mut.get_mut(id as usize)
                                                 .map(|pair| {
                                                     if let Some(resp) = pair.resp_mut() {
@@ -251,12 +268,12 @@ impl Store {
                                             });
 
                                         },
-                                        crate::proxy::ProxyState::ResponseDone { id } => {
+                                        crate::proxy::ProxyState::ResponseDone => {
                                             if let Some(pair) = store_mut.get_mut(id as usize) {
                                                 if let Some(resp) = pair.resp_mut() {
                                                     resp.status = StoredResult::Ok;
                                                 } else {
-                                                    println!("Request done but nothing stored????")
+                                                    println!("Response {} done but nothing stored????", id)
                                                 }
                                             }
 
@@ -270,9 +287,11 @@ impl Store {
                                         crate::proxy::ProxyState::Error(e) => {
                                             if let Some(pair) = store_mut.get_mut(id) {
                                                 if let Some( resp ) = pair.resp_mut() {
-                                                    resp.status = StoredResult::Error(e)
+                                                    println!("Got error with stored rx: {}", id);
+                                                    resp.status = StoredResult::Error(e.clone())
                                                 } else if let Some( req ) = pair.req_mut() {
-                                                    req.status = StoredResult::Error(e)
+                                                    println!("Got error with stored tx: {}", id);
+                                                    req.status = StoredResult::Error(e.clone())
                                                 } else {
                                                     println!("Got error for {} but neigher req or resp", id);
                                                 }
@@ -281,6 +300,13 @@ impl Store {
                                         _ => {} // None of the other enums do things with requests
                                     }
                                 }
+                            }
+                            match event {
+                                crate::proxy::ProxyState::RequestHead(_, ref mut wait) |
+                                crate::proxy::ProxyState::ResponseHead(_, ref mut wait) => {
+                                    wait.complete().await;
+                                }
+                                _ => {}
                             }
                         },
                         Err(RecvError::Lagged(n)) => {

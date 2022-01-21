@@ -1,4 +1,4 @@
-use std::{sync::atomic::{AtomicU32, Ordering}, pin::Pin, task::Poll, cell::RefCell};
+use std::{pin::Pin, task::Poll, cell::RefCell};
 
 use futures::lock::Mutex;
 use futures_core::stream::Stream;
@@ -13,15 +13,13 @@ enum StreamFork {
 }
 
 impl StreamFork {
-    fn send_event(&self, id: u32, request_id: &AtomicU32, chunk: Bytes) {
-        let request_id = request_id.fetch_add(1, Ordering::Relaxed);
+    fn send_event(&self, id: u32, chunk: Bytes) {
         match self {
             Self::RequestStream(stream) => {
                 stream.send(
                     ProxyEvent {
                         id,
                         event: ProxyState::RequestChunk {
-                            id: request_id,
                             chunk
                         },
                     }
@@ -32,7 +30,6 @@ impl StreamFork {
                     ProxyEvent {
                         id,
                         event: ProxyState::ResponseChunk {
-                            id: request_id,
                             chunk
                         },
                     }
@@ -41,16 +38,13 @@ impl StreamFork {
         }
     }
 
-    fn close(&self, id: u32, request_id: &AtomicU32) {
-        let request_id = request_id.fetch_add(1, Ordering::Relaxed);
+    fn close(&self, id: u32) {
         match self {
             Self::RequestStream(stream) => {
                 stream.send(
                     ProxyEvent {
                         id,
-                        event: ProxyState::RequestDone {
-                            id: request_id,
-                        },
+                        event: ProxyState::RequestDone
                     }
                 ).unwrap();
             },
@@ -58,9 +52,7 @@ impl StreamFork {
                 stream.send(
                     ProxyEvent {
                         id,
-                        event: ProxyState::ResponseDone {
-                            id: request_id,
-                        },
+                        event: ProxyState::ResponseDone
                     }
                 ).unwrap();
             }
@@ -72,7 +64,6 @@ impl StreamFork {
 pub struct InnerStreamBody {
     inner: Body,
     id: u32,
-    request_id: AtomicU32,
     stream: StreamFork
 }
 
@@ -95,7 +86,6 @@ impl StreamBody {
         Self::new( InnerStreamBody{
             inner,
             id,
-            request_id: AtomicU32::new(0),
             stream: StreamFork::RequestStream(channel)
         })
     }
@@ -104,13 +94,18 @@ impl StreamBody {
         Self::new(InnerStreamBody {
             inner,
             id,
-            request_id: AtomicU32::new(0),
             stream: StreamFork::ResponseStream(channel)
         })
     }
 
     pub fn try_into_body(&self) -> Option<Body> {
         self.try_take().map(Body::wrap_stream)
+    }
+}
+
+impl Drop for InnerStreamBody {
+    fn drop(&mut self) {
+        self.stream.close(self.id)
     }
 }
 
@@ -124,12 +119,11 @@ impl Stream for InnerStreamBody {
             Poll::Ready(next) => Poll::Ready({
                 match next {
                     None => {
-                        self.stream.close(self.id, &self.request_id);
                         None
                     },
                     Some(n) => Some(match n {
                         Ok(chunk) => {
-                            self.stream.send_event(self.id, &self.request_id, chunk.clone());
+                            self.stream.send_event(self.id, chunk.clone());
                             Ok(chunk)
                         },
                         Err(e) => Err(e)
