@@ -125,6 +125,9 @@ impl Store {
             if range.end > cache.len() {
                 range.end = cache.len();
             }
+            if range.start > range.end {
+                range.end = range.start
+            }
             let start = range.start;
             cache[range].iter().enumerate().for_each( | (idx, pair) | {
                 if let Some(req) = &pair.request {
