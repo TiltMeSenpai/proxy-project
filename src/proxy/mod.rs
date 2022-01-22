@@ -5,7 +5,7 @@ pub mod response;
 pub mod body;
 mod core;
 
-pub use tokio::sync::broadcast::{Sender, Receiver};
+pub use tokio::sync::mpsc::{Sender, Receiver};
 pub use self::core::*;
 use crate::Waitpoint;
 

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -15,7 +15,7 @@ use hyper::{Body, Client, Method, Request, Response, Server, Uri};
 use hyper::body::Bytes;
 use rustls::{ServerConfig, ClientConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::broadcast::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
 use tokio::{try_join, select};
@@ -41,7 +41,7 @@ impl Default for ProxyConfig {
 }
 
 impl ProxyConfig {
-    pub fn build(self) -> ProxyServer {
+    pub fn build(self) -> (ProxyServer, Receiver<ProxyEvent>) {
         ProxyServer::new(self)
     }
 }
@@ -53,8 +53,8 @@ pub struct ProxyServer {
 }
 
 impl ProxyServer {
-    pub fn new(conf: ProxyConfig) -> Self {
-        let (tx, _rx) = channel(128);
+    pub fn new(conf: ProxyConfig) -> (Self, Receiver<ProxyEvent>) {
+        let (tx, rx) = channel(128);
         let mut http_connector = hyper::client::HttpConnector::new();
         http_connector.enforce_http(false);
         let client_config = ClientConfig::builder()
@@ -66,7 +66,7 @@ impl ProxyServer {
             .https_or_http()
             .enable_http1()
             .build();
-        Self {
+        (Self {
             listen: conf.listen,
             events: tx.clone(),
             core: ProxyCore {
@@ -79,15 +79,11 @@ impl ProxyServer {
                 fallback_host: None,
                 client: Client::builder().build(client)
             },
-        }
+        }, rx)
     }
 
     pub fn run(self) -> JoinHandle<Result<(), hyper::Error>> {
         tokio::spawn(Server::bind(&self.listen).serve(self))
-    }
-
-    pub fn subscribe(&self) -> Receiver<ProxyEvent> {
-        self.events.subscribe()
     }
 }
 
@@ -162,14 +158,14 @@ impl Service<Request<Body>> for ProxyCore {
                     let uri = Uri::from_parts(uri).unwrap();
                     *req.uri_mut() = uri;
                     let req_waiter = crate::Waitpoint::new();
-                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone(), req_waiter.clone());
+                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone(), req_waiter.clone()).await;
                     req_waiter.await;
                     match proxy.client.request(ser_req.into()).await {
                         Err(e) => {
                             proxy.channel.send(super::ProxyEvent {
                                 id: id,
                                 event: super::ProxyState::Error(e.to_string())
-                            }).unwrap();
+                            }).await;
                             Ok(
                                 Response::builder()
                                     .status(500)
@@ -179,7 +175,7 @@ impl Service<Request<Body>> for ProxyCore {
                         },
                         Ok(resp) => {
                             let resp_waiter = crate::Waitpoint::new();
-                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone(), resp_waiter.clone());
+                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone(), resp_waiter.clone()).await;
                             resp_waiter.await;
                             tokio::spawn( async move {
                                 if let (Some(req_upgrade), Some(resp_upgrade)) = (req_upgrade, resp_upgrade) {
@@ -188,7 +184,7 @@ impl Service<Request<Body>> for ProxyCore {
                                     let chunk_id = AtomicU32::new(0);
                                     match try_join!(req_upgrade, resp_upgrade){
                                         Ok((mut req, mut resp)) => {
-                                            chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeOpen}).unwrap();
+                                            chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeOpen}).await;
                                             loop {
                                                 select!{
                                                     chunk = async {
@@ -199,7 +195,7 @@ impl Service<Request<Body>> for ProxyCore {
                                                                 chan.send(super::ProxyEvent{
                                                                     id, 
                                                                     event: super::ProxyState::UpgradeTx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
-                                                                }).unwrap();
+                                                                }).await;
                                                                 Some(bytes)
                                                             } else {
                                                                 None
@@ -223,7 +219,7 @@ impl Service<Request<Body>> for ProxyCore {
                                                                 chan.send(super::ProxyEvent{
                                                                     id, 
                                                                     event: super::ProxyState::UpgradeRx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
-                                                                }).unwrap();
+                                                                }).await;
                                                                 Some(bytes)
                                                             } else {
                                                                 None
@@ -246,7 +242,7 @@ impl Service<Request<Body>> for ProxyCore {
                                             eprintln!("Error upgrading: {}", e)
                                         }
                                     }
-                                    chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeClose}).unwrap();
+                                    chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeClose}).await;
                                     println!("Done, closing socket");
                                 }
                             });

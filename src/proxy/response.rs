@@ -17,14 +17,14 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn from_response(resp: hyper::Response<Body>, id: u32, channel: Sender<ProxyEvent>, wait: crate::Waitpoint) -> (Self, Option<OnUpgrade>) {
+    pub async fn from_response(resp: hyper::Response<Body>, id: u32, channel: Sender<ProxyEvent>, wait: crate::Waitpoint) -> (Self, Option<OnUpgrade>) {
         let (mut parts, body) = resp.into_parts();
         let head = ResponseHead {
                 status:  parts.status,
                 version: parts.version,
                 headers: parts.headers,
         };
-        channel.send(ProxyEvent{id, event: ProxyState::ResponseHead(head.clone(), wait)}).unwrap();
+        channel.send(ProxyEvent{id, event: ProxyState::ResponseHead(head.clone(), wait)}).await;
         (Self {
             head,
             body: StreamBody::stream_response(body, id,  channel)

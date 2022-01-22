@@ -3,7 +3,7 @@ use std::{pin::Pin, task::Poll, cell::RefCell};
 use futures::lock::Mutex;
 use futures_core::stream::Stream;
 use hyper::{body::Bytes, Body};
-use tokio::sync::broadcast::Sender;
+use tokio::sync::mpsc::Sender;
 use crate::proxy::{ProxyEvent, ProxyState};
 
 #[derive(Clone, Debug)]
@@ -13,7 +13,7 @@ enum StreamFork {
 }
 
 impl StreamFork {
-    fn send_event(&self, id: u32, chunk: Bytes) {
+    async fn send_event(&self, id: u32, chunk: Bytes) {
         match self {
             Self::RequestStream(stream) => {
                 stream.send(
@@ -23,7 +23,7 @@ impl StreamFork {
                             chunk
                         },
                     }
-                ).unwrap();
+                ).await;
             },
             Self::ResponseStream(stream) => {
                 stream.send(
@@ -33,7 +33,7 @@ impl StreamFork {
                             chunk
                         },
                     }
-                ).unwrap();
+                ).await;
             }
         }
     }
@@ -41,7 +41,7 @@ impl StreamFork {
     fn close(&self, id: u32) {
         match self {
             Self::RequestStream(stream) => {
-                stream.send(
+                stream.try_send(
                     ProxyEvent {
                         id,
                         event: ProxyState::RequestDone
@@ -49,7 +49,7 @@ impl StreamFork {
                 ).unwrap();
             },
             Self::ResponseStream(stream) => {
-                stream.send(
+                stream.try_send(
                     ProxyEvent {
                         id,
                         event: ProxyState::ResponseDone

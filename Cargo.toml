@@ -3,10 +3,6 @@ name = "proxy"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "proxy_core"
-path = "src/lib.rs"
-
 [[bin]]
 name = "stain"
 path = "src/main.rs"

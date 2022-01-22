@@ -1,5 +1,9 @@
+use tokio::sync::mpsc::Receiver;
+
 use eframe::egui::ScrollArea;
 use eframe::{epi, egui};
+use crate::proxy::ProxyEvent;
+
 use super::proxy::ProxyServer;
 use super::store::Store;
 use tokio::task::JoinHandle;
@@ -11,9 +15,9 @@ pub struct ProxyApp {
 }
 
 impl ProxyApp {
-    pub fn run(server: ProxyServer) -> Box<Self> {
+    pub fn run(server: ProxyServer, events: Receiver<ProxyEvent>) -> Box<Self> {
         let mut store = Store::new();
-        store.subscribe(server.subscribe());
+        store.subscribe(events);
         Box::new(Self {
             store:  store,
             server: server.run()

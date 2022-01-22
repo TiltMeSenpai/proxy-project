@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui::{Ui, Label, RichText, Sense};
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::error::RecvError;
 use tokio::task::JoinHandle;
 
 use super::proxy::request::RequestHead;
@@ -174,7 +174,7 @@ impl Store {
                 loop {
                     let mut repaint = false;
                     match channel.recv().await {
-                        Ok(ProxyEvent{id, mut event}) => {
+                        Some(ProxyEvent{id, mut event}) => {
                             if let Ok(mut store_mut) = store.cache.try_borrow_mut() {
                                 if id > 0 {
                                     let id = (id - 1) as usize;
@@ -309,11 +309,7 @@ impl Store {
                                 _ => {}
                             }
                         },
-                        Err(RecvError::Lagged(n)) => {
-                            let count = store.lag_count.fetch_add(n as u32, Ordering::Relaxed);
-                            println!("Lagged! {} requests missed", count as u64 + n);
-                        },
-                        Err(RecvError::Closed) => break
+                        None => break
                     }
                     if repaint {
                         if let Some(frame) = frame.lock().unwrap().as_ref() {

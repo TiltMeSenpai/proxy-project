@@ -13,7 +13,7 @@ use eframe;
 #[tokio::main(worker_threads = 4)]
 async fn main() {
     let config: proxy::ProxyConfig = Default::default();
-    let proxy = config.build();
-    let app = gui::ProxyApp::run(proxy);
+    let (proxy, events) = config.build();
+    let app = gui::ProxyApp::run(proxy, events);
     eframe::run_native(app, eframe::NativeOptions::default())
 }

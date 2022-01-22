@@ -18,7 +18,7 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn from_request(req: hyper::Request<Body>, id: u32, channel: Sender<ProxyEvent>, wait: crate::Waitpoint) -> (Self, Option<OnUpgrade>) {
+    pub async fn from_request(req: hyper::Request<Body>, id: u32, channel: Sender<ProxyEvent>, wait: crate::Waitpoint) -> (Self, Option<OnUpgrade>) {
         let (mut parts, body) = req.into_parts();
         let head = RequestHead {
                 method:  parts.method,
@@ -26,7 +26,7 @@ impl Request {
                 version: parts.version,
                 headers: parts.headers,
         };
-        channel.send(ProxyEvent{id, event: ProxyState::RequestHead(head.clone(), wait)}).unwrap();
+        channel.send(ProxyEvent{id, event: ProxyState::RequestHead(head.clone(), wait)}).await;
         (Self {
             head,
             body: StreamBody::stream_request(body, id,  channel),
