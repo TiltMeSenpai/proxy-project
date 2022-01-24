@@ -170,8 +170,8 @@ impl Service<Request<Body>> for ProxyCore {
                         },
                         Ok(resp) => {
                             let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone()).await;
-                            tokio::spawn( async move {
-                                if let (Some(req_upgrade), Some(resp_upgrade)) = (req_upgrade, resp_upgrade) {
+                            if let (Some(req_upgrade), Some(resp_upgrade)) = (req_upgrade, resp_upgrade) {
+                                tokio::spawn( async move {
                                     println!("Both sides trying to upgrade, attempting");
                                     let chan = proxy.channel.clone();
                                     let chunk_id = AtomicU32::new(0);
@@ -253,8 +253,8 @@ impl Service<Request<Body>> for ProxyCore {
                                     }
                                     chan.send(super::ProxyEvent::upgrade_close(id)).await.unwrap();
                                     println!("Done, closing socket");
-                                }
-                            });
+                                });
+                            };
                             Ok(resp.into())
                         }
                     }
