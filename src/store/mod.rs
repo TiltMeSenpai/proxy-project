@@ -1,11 +1,9 @@
 use std::cell::RefCell;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use eframe::egui::{Ui, Label, RichText, Sense};
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::error::RecvError;
 use tokio::task::JoinHandle;
 
 use super::proxy::request::RequestHead;
@@ -61,7 +59,6 @@ impl StoredPair{
 }
 
 struct InnerStore {
-    lag_count: AtomicU32,
     cache: RefCell<Vec<StoredPair>>
 }
 
@@ -78,7 +75,6 @@ impl Store {
     pub fn new() -> Self {
         Self{
             store: Arc::new(InnerStore{
-                lag_count: AtomicU32::new(0),
                 cache: RefCell::new(Vec::new())
             }),
             job: None,
@@ -89,10 +85,6 @@ impl Store {
 
     pub fn size(&self) -> Option<usize> {
         self.store.cache.try_borrow().map(|store| store.len()).ok()
-    }
-
-    pub fn lag(&self) -> u32 {
-        self.store.lag_count.load(Ordering::Relaxed)
     }
 
     pub fn set_frame(&self, frame: eframe::epi::Frame) {
@@ -174,13 +166,13 @@ impl Store {
                 loop {
                     let mut repaint = false;
                     match channel.recv().await {
-                        Some(ProxyEvent{id, mut event}) => {
+                        Some(ProxyEvent{id, event, callback}) => {
                             if let Ok(mut store_mut) = store.cache.try_borrow_mut() {
                                 if id > 0 {
                                     let id = (id - 1) as usize;
                                     let len = store_mut.len();
                                     match &event {
-                                        crate::proxy::ProxyState::RequestHead(head, _wait) => {
+                                        crate::proxy::ProxyState::RequestHead(head) => {
                                             repaint = true;
                                             match std::cmp::Ord::cmp(&len, &id) {
                                                 std::cmp::Ordering::Equal => {
@@ -225,7 +217,7 @@ impl Store {
                                                 },
                                             }
                                         },
-                                        crate::proxy::ProxyState::RequestChunk { chunk } => {
+                                        crate::proxy::ProxyState::RequestChunk ( chunk ) => {
                                             if let Some(pair) = store_mut.get_mut(id as usize) {
                                                     if let Some(req) = pair.req_mut() {
                                                         req.body.extend_from_slice(&chunk);
@@ -245,7 +237,7 @@ impl Store {
                                                 }
                                             }
                                         },
-                                        crate::proxy::ProxyState::ResponseHead( head, _wait) => {
+                                        crate::proxy::ProxyState::ResponseHead( head ) => {
                                             if let Some(pair) = store_mut.get_mut(id as usize) {
                                                 if pair.response == None {
                                                     pair.response = Some(StoredResponse {
@@ -259,7 +251,7 @@ impl Store {
                                                 println!("Missing response {}, wtf???", id);
                                             }
                                         },
-                                        crate::proxy::ProxyState::ResponseChunk { chunk } => {
+                                        crate::proxy::ProxyState::ResponseChunk ( chunk ) => {
                                             store_mut.get_mut(id as usize)
                                                 .map(|pair| {
                                                     if let Some(resp) = pair.resp_mut() {
@@ -293,7 +285,7 @@ impl Store {
                                                     println!("Got error with stored tx: {}", id);
                                                     req.status = StoredResult::Error(e.clone())
                                                 } else {
-                                                    println!("Got error for {} but neigher req or resp", id);
+                                                    println!("Got error for {} but neither req or resp", id);
                                                 }
                                             }
                                         }
@@ -301,13 +293,10 @@ impl Store {
                                     }
                                 }
                             }
-                            match event {
-                                crate::proxy::ProxyState::RequestHead(_, ref mut wait) |
-                                crate::proxy::ProxyState::ResponseHead(_, ref mut wait) => {
-                                    wait.complete().await;
-                                }
-                                _ => {}
-                            }
+                            // Intercept/edit logic will go here
+                            if let Some(callback) = callback {
+                                callback.send(event).unwrap();
+                            };
                         },
                         None => break
                     }

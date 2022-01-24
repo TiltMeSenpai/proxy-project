@@ -1,6 +1,6 @@
 use std::{pin::Pin, task::Poll, cell::RefCell};
 
-use futures::lock::Mutex;
+use futures::{lock::Mutex, Future, StreamExt};
 use futures_core::stream::Stream;
 use hyper::{body::Bytes, Body};
 use tokio::sync::mpsc::Sender;
@@ -13,27 +13,31 @@ enum StreamFork {
 }
 
 impl StreamFork {
-    async fn send_event(&self, id: u32, chunk: Bytes) {
+    async fn send_event(&self, id: u32, chunk: Bytes) -> Bytes {
         match self {
             Self::RequestStream(stream) => {
-                stream.send(
-                    ProxyEvent {
-                        id,
-                        event: ProxyState::RequestChunk {
-                            chunk
-                        },
+                let (event, completion) = ProxyEvent::req_chunk(id, &chunk);
+                stream.send( event ).await.unwrap();
+                match completion.await {
+                    Ok(ProxyState::RequestChunk(chunk)) => chunk,
+                    Ok(e) => {
+                        println!("Got unexpected response: {:?}", e);
+                        chunk
                     }
-                ).await;
+                    Err(_) => chunk
+                }
             },
             Self::ResponseStream(stream) => {
-                stream.send(
-                    ProxyEvent {
-                        id,
-                        event: ProxyState::ResponseChunk {
-                            chunk
-                        },
+                let (event, completion) = ProxyEvent::resp_chunk(id, &chunk);
+                stream.send( event ).await.unwrap();
+                match completion.await {
+                    Ok(ProxyState::ResponseChunk(chunk)) => chunk,
+                    Ok(e) => {
+                        println!("Got unexpected response: {:?}", e);
+                        chunk
                     }
-                ).await;
+                    Err(_) => chunk
+                }
             }
         }
     }
@@ -42,29 +46,16 @@ impl StreamFork {
         match self {
             Self::RequestStream(stream) => {
                 stream.try_send(
-                    ProxyEvent {
-                        id,
-                        event: ProxyState::RequestDone
-                    }
+                    ProxyEvent::req_done(id)
                 ).unwrap();
             },
             Self::ResponseStream(stream) => {
                 stream.try_send(
-                    ProxyEvent {
-                        id,
-                        event: ProxyState::ResponseDone
-                    }
+                    ProxyEvent::req_done(id)
                 ).unwrap();
             }
         }
     }
-}
-
-#[derive(Debug)]
-pub struct InnerStreamBody {
-    inner: Body,
-    id: u32,
-    stream: StreamFork
 }
 
 #[repr(transparent)]
@@ -86,7 +77,7 @@ impl StreamBody {
         Self::new( InnerStreamBody{
             inner,
             id,
-            stream: StreamFork::RequestStream(channel)
+            stream: StreamFork::RequestStream(channel),
         })
     }
 
@@ -94,13 +85,19 @@ impl StreamBody {
         Self::new(InnerStreamBody {
             inner,
             id,
-            stream: StreamFork::ResponseStream(channel)
+            stream: StreamFork::ResponseStream(channel),
         })
     }
 
     pub fn try_into_body(&self) -> Option<Body> {
-        self.try_take().map(Body::wrap_stream)
+        self.try_take().map(|inner| Body::wrap_stream(inner.to_stream()))
     }
+}
+
+pub struct InnerStreamBody {
+    inner: Body,
+    id: u32,
+    stream: StreamFork
 }
 
 impl Drop for InnerStreamBody {
@@ -109,28 +106,19 @@ impl Drop for InnerStreamBody {
     }
 }
 
-impl Stream for InnerStreamBody {
-    type Item = hyper::Result<Bytes>;
 
-    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-        let pinned_inner = Pin::new(&mut self.inner);
-
-        match Stream::poll_next(pinned_inner, cx) {
-            Poll::Ready(next) => Poll::Ready({
-                match next {
-                    None => {
-                        None
-                    },
-                    Some(n) => Some(match n {
-                        Ok(chunk) => {
-                            self.stream.send_event(self.id, chunk.clone());
-                            Ok(chunk)
-                        },
-                        Err(e) => Err(e)
-                    })
-                }
-            }),
-            Poll::Pending => Poll::Pending
-        }
+impl InnerStreamBody {
+    fn to_stream(self) -> impl Stream<Item = hyper::Result<Bytes>>
+    {
+        futures::stream::unfold(self, | mut stream | async move {
+            match stream.inner.next().await {
+                Some(Ok(next)) => {
+                    let bytes = stream.stream.send_event(stream.id, next).await;
+                    Some((Ok(bytes), stream))
+                },
+                Some(Err(e)) => Some((Err(e), stream)),
+                None => None
+            }
+        })
     }
 }

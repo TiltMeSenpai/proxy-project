@@ -241,7 +241,7 @@ impl ServerCertVerifier for CertVerifier {
         now: std::time::SystemTime,
     ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
         if let Err(e) = self.inner.verify_server_cert(end_entity, intermediates, server_name, scts, ocsp_response, now) {
-            self.channel.try_send(crate::proxy::ProxyEvent{id: 0, event: crate::proxy::ProxyState::Msg(e.to_string())}).unwrap();
+            self.channel.try_send(crate::proxy::ProxyEvent::msg(e.to_string())).unwrap();
         }
         Ok(rustls::client::ServerCertVerified::assertion())
     }

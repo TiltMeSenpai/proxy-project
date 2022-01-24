@@ -157,15 +157,10 @@ impl Service<Request<Body>> for ProxyCore {
                     }
                     let uri = Uri::from_parts(uri).unwrap();
                     *req.uri_mut() = uri;
-                    let req_waiter = crate::Waitpoint::new();
-                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone(), req_waiter.clone()).await;
-                    req_waiter.await;
+                    let (ser_req, req_upgrade) = super::request::Request::from_request(req, id, proxy.channel.clone()).await;
                     match proxy.client.request(ser_req.into()).await {
                         Err(e) => {
-                            proxy.channel.send(super::ProxyEvent {
-                                id: id,
-                                event: super::ProxyState::Error(e.to_string())
-                            }).await;
+                            proxy.channel.send(super::ProxyEvent::err(id, e.to_string())).await.unwrap();
                             Ok(
                                 Response::builder()
                                     .status(500)
@@ -174,9 +169,7 @@ impl Service<Request<Body>> for ProxyCore {
                             )
                         },
                         Ok(resp) => {
-                            let resp_waiter = crate::Waitpoint::new();
-                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone(), resp_waiter.clone()).await;
-                            resp_waiter.await;
+                            let (resp, resp_upgrade) = super::response::Response::from_response(resp, id, proxy.channel.clone()).await;
                             tokio::spawn( async move {
                                 if let (Some(req_upgrade), Some(resp_upgrade)) = (req_upgrade, resp_upgrade) {
                                     println!("Both sides trying to upgrade, attempting");
@@ -184,19 +177,27 @@ impl Service<Request<Body>> for ProxyCore {
                                     let chunk_id = AtomicU32::new(0);
                                     match try_join!(req_upgrade, resp_upgrade){
                                         Ok((mut req, mut resp)) => {
-                                            chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeOpen}).await;
+                                            chan.send(super::ProxyEvent::upgrade_open(id)).await.unwrap();
                                             loop {
                                                 select!{
                                                     chunk = async {
                                                         let mut buf: [u8; 512] = [0; 512];
-                                                        if let Ok(read) = req.read(&mut buf).await{
+                                                        if let Ok(read) = req.read(&mut buf).await {
                                                             if read > 0 {
                                                                 let bytes = Bytes::copy_from_slice(&buf[..read]);
-                                                                chan.send(super::ProxyEvent{
-                                                                    id, 
-                                                                    event: super::ProxyState::UpgradeTx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
-                                                                }).await;
-                                                                Some(bytes)
+                                                                let req_id = chunk_id.fetch_add(1, crate::ORDERING);
+                                                                let (event, completion) = super::ProxyEvent::upgrade_tx(id, req_id, &bytes);
+                                                                chan.send(event).await.unwrap();
+                                                                match completion.await {
+                                                                    Ok(super::ProxyState::UpgradeTx{id, chunk}) => Some(chunk),
+                                                                    Ok(e) => {
+                                                                        println!("Got unexpected result, ignoring: {:?}", e);
+                                                                        Some(bytes)
+                                                                    },
+                                                                    Err(_) => {
+                                                                        Some(bytes)
+                                                                    }
+                                                                }
                                                             } else {
                                                                 None
                                                             }
@@ -216,11 +217,19 @@ impl Service<Request<Body>> for ProxyCore {
                                                         if let Ok(read) = resp.read(&mut buf).await{
                                                             if read > 0 {
                                                                 let bytes = Bytes::copy_from_slice(&buf[..read]);
-                                                                chan.send(super::ProxyEvent{
-                                                                    id, 
-                                                                    event: super::ProxyState::UpgradeRx{id: chunk_id.fetch_add(1, crate::ORDERING), chunk: bytes.clone()}
-                                                                }).await;
-                                                                Some(bytes)
+                                                                let req_id = chunk_id.fetch_add(1, crate::ORDERING);
+                                                                let (event, completion) = super::ProxyEvent::upgrade_rx(id, req_id, &bytes);
+                                                                chan.send(event).await.unwrap();
+                                                                match completion.await {
+                                                                    Ok(super::ProxyState::UpgradeRx{id, chunk}) => Some(chunk),
+                                                                    Ok(e) => {
+                                                                        println!("Got unexpected result, ignoring: {:?}", e);
+                                                                        Some(bytes)
+                                                                    },
+                                                                    Err(_) => {
+                                                                        Some(bytes)
+                                                                    }
+                                                                }
                                                             } else {
                                                                 None
                                                             }
@@ -242,7 +251,7 @@ impl Service<Request<Body>> for ProxyCore {
                                             eprintln!("Error upgrading: {}", e)
                                         }
                                     }
-                                    chan.send(super::ProxyEvent{id, event: super::ProxyState::UpgradeClose}).await;
+                                    chan.send(super::ProxyEvent::upgrade_close(id)).await.unwrap();
                                     println!("Done, closing socket");
                                 }
                             });

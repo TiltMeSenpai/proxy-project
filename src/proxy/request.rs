@@ -18,7 +18,7 @@ pub struct Request {
 }
 
 impl Request {
-    pub async fn from_request(req: hyper::Request<Body>, id: u32, channel: Sender<ProxyEvent>, wait: crate::Waitpoint) -> (Self, Option<OnUpgrade>) {
+    pub async fn from_request(req: hyper::Request<Body>, id: u32, channel: Sender<ProxyEvent>) -> (Self, Option<OnUpgrade>) {
         let (mut parts, body) = req.into_parts();
         let head = RequestHead {
                 method:  parts.method,
@@ -26,7 +26,19 @@ impl Request {
                 version: parts.version,
                 headers: parts.headers,
         };
-        channel.send(ProxyEvent{id, event: ProxyState::RequestHead(head.clone(), wait)}).await;
+        let (event, completion) = ProxyEvent::req_head(id, &head);
+        channel.send(event).await.unwrap();
+        let head = match completion.await {
+            Ok(ProxyState::RequestHead(head)) => head,
+            Ok(e) => {
+                println!("Got unexpected result {:?}", e);
+                head
+            }
+            Err(_) => {
+                println!("Dropped sender");
+                head
+            }
+        };
         (Self {
             head,
             body: StreamBody::stream_request(body, id,  channel),
