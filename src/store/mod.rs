@@ -10,6 +10,8 @@ use super::proxy::request::RequestHead;
 use super::proxy::response::ResponseHead;
 use super::proxy::ProxyEvent;
 
+mod storable;
+
 #[derive(PartialEq, Clone)]
 struct StoredRequest {
     head: RequestHead,
@@ -64,7 +66,7 @@ struct InnerStore {
 
 unsafe impl Sync for InnerStore {}
 
-pub struct Store{
+pub struct Store {
     store: Arc<InnerStore>,
     frame: Arc<Mutex<Option<eframe::epi::Frame>>>, // Store a frame so we can request a repaint with an update
     active: Option<usize>,
